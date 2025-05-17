@@ -15,8 +15,7 @@ class MusicCog(commands.Cog):
         self.loop_state = {}
         self.current_song = {}
         self.ytdl_config = {
-            'extractaudio': True,
-            'audioformat': 'mp3',
+            'format': 'bestaudio/best',
             'noplaylist': False,
             'nocheckcertificate': True,
             'ignoreerrors': False,
@@ -24,19 +23,15 @@ class MusicCog(commands.Cog):
             'no_warnings': True,
             'default_search': 'auto',
             'source_address': '0.0.0.0',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '128',
-            }],
+            'skip_download': True,
             'buffersize': 4096,
-            'concurrent_fragment_downloads': 3,
+            'concurrent_fragment_downloads': 5,
             'socket_timeout': 10,
             'retries': 3,
         }
         self.ffmpeg_config = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -analyzeduration 0 -probesize 1024',
-            'options': '-vn -ar 48000 -ac 2 -b:a 128k -bufsize 4096k',  # Optimized for faster streaming
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+            'options': '-vn -ar 48000 -ac 2 -b:a 128k -bufsize 4096k',
         }
         self.check_inactivity.start()
 
@@ -127,6 +122,38 @@ class MusicCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"დამენძრა: {str(e)}")
             await self.play_next(ctx)
+    
+    async def process_url(self, url, download=False):
+        quick_config = self.ytdl_config.copy()
+        try:
+            with yt_dlp.YoutubeDL(quick_config) as ydl:
+                info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=download))
+                
+                if 'entries' in info:
+                    if not info['entries']:
+                        return None, [], False
+                    
+                    is_playlist = len(info['entries']) > 1
+                    if is_playlist:
+                        entries = []
+                        for entry in info['entries']:
+                            if entry:
+                                entries.append({
+                                    'url': entry.get('url'),
+                                    'title': entry.get('title', 'Unknown Track')
+                                })
+                        return info.get('title', 'Unknown Playlist'), entries, True
+                    else:
+                        info = info['entries'][0]
+                
+                return info.get('title', 'Unknown Track'), {
+                    'url': info.get('url'),
+                    'title': info.get('title', 'Unknown Track')
+                }, False
+                
+        except Exception as e:
+            print(f"Error processing URL: {e}")
+            return None, None, False
 
     @commands.command()
     async def play(self, ctx, *, url):
@@ -145,68 +172,51 @@ class MusicCog(commands.Cog):
         
         if guild_id not in self.loop_state:
             self.loop_state[guild_id] = 0
-            
-        processing_msg = await ctx.send("ვამუშავებ სიმღერას...")
         
+        processing_msg = await ctx.send("ვამუშავებ სიმღერას...")
         is_playing = voice_client and voice_client.is_playing()
         
-        quick_config = self.ytdl_config.copy()
-        quick_config.update({
-            'format': 'bestaudio',
-            'postprocessors': [],
-            'noplaylist': False,
-            'skip_download': True,
-            'quiet': True,
-        })
+        is_likely_playlist = 'list=' in url and 'playlist' not in url.lower()
+        playlist_requested = 'playlist' in url.lower() or is_likely_playlist
         
         try:
-            with yt_dlp.YoutubeDL(quick_config) as ydl:
-                info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+            if is_likely_playlist and not playlist_requested:
+                url = url.split('&list=')[0] if '&list=' in url else url.split('?list=')[0] if '?list=' in url else url
+                playlist_requested = False
+            
+            title, result, is_playlist = await self.process_url(url)
+            queue = self.get_queue(guild_id)
+            
+            if is_playlist:
+                await processing_msg.edit(content=f"პლეილისტი ნაპოვნია: {title} - {len(result)} სიმღერა")
                 
-                queue = self.get_queue(guild_id)
+                for song_info in result:
+                    queue.append(song_info)
                 
-                if 'entries' in info and len(info['entries']) > 1:
-                    await processing_msg.edit(content=f"პლეილისტი ნაპოვნია: {info.get('title', 'Unknown Playlist')} - {len(info['entries'])} სიმღერა")
-                    
-                    added_songs = []
-                    for i, entry in enumerate(info['entries']):
-                        if entry:
-                            song_info = {
-                                'url': entry.get('url'),
-                                'title': entry.get('title', f'Unknown Track {i+1}')
-                            }
-                            queue.append(song_info)
-                            added_songs.append(song_info)
-                    
-                    await ctx.send(f"რიგში დაემატა {len(added_songs)} სიმღერა პლეილისტიდან")
-                    
-                    if not is_playing and added_songs:
-                        await self.play_next(ctx)
+                await ctx.send(f"რიგში დაემატა {len(result)} სიმღერა პლეილისტიდან")
                 
+                if not is_playing and result:
+                    await self.play_next(ctx)
+            
+            elif result:
+                song_info = result
+                
+                if is_playing:
+                    queue.append(song_info)
+                    position = len(queue)
+                    await processing_msg.edit(content=f'{position}: {song_info["title"]} დაემატა რიგში')
                 else:
-                    if 'entries' in info and info['entries']:
-                        info = info['entries'][0]
-                    
-                    song_info = {
-                        'url': info.get('url'),
-                        'title': info.get('title', 'Unknown Track')
-                    }
-                    
-                    if is_playing:
-                        queue.append(song_info)
-                        position = len(queue)
-                        await processing_msg.edit(content=f'{position}: {song_info["title"]} დაემატა რიგში')
-                    else:
-                        queue.append(song_info)
-                        await processing_msg.edit(content=f'ვიწყებ დაკვრას: {song_info["title"]}')
-                        await self.play_next(ctx)
-                    
+                    queue.append(song_info)
+                    await processing_msg.edit(content=f'ვიწყებ დაკვრას: {song_info["title"]}')
+                    await self.play_next(ctx)
+            else:
+                await processing_msg.edit(content="სიმღერის დამუშავება ვერ მოხერხდა")
+                
         except Exception as e:
             await processing_msg.edit(content=f"დამენძრა: {str(e)}")
 
     @commands.command()
     async def playlist(self, ctx, *, url):
-        """Play a YouTube playlist (same as play but forces playlist mode)"""
         if not ctx.author.voice:
             await ctx.send("ვოისში უნდა იყო შესული!")
             return
@@ -224,68 +234,114 @@ class MusicCog(commands.Cog):
             self.loop_state[guild_id] = 0
             
         processing_msg = await ctx.send("ვამუშავებ პლეილისტს...")
-        
         is_playing = voice_client and voice_client.is_playing()
         
-        playlist_config = self.ytdl_config.copy()
-        playlist_config.update({
-            'format': 'bestaudio',
-            'postprocessors': [],
-            'extract_flat': True,
-            'noplaylist': False,
-            'skip_download': True,
-            'quiet': True,
-        })
-        
         try:
-            with yt_dlp.YoutubeDL(playlist_config) as ydl:
-                playlist_info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+            quick_config = self.ytdl_config.copy()
+            quick_config['extract_flat'] = True
+            
+            with yt_dlp.YoutubeDL(quick_config) as ydl:
+                info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
                 
-                if 'entries' not in playlist_info or not playlist_info['entries']:
+                if 'entries' not in info or not info['entries']:
                     await processing_msg.edit(content="პლეილისტი ვერ ვიპოვე ან ცარიელია")
                     return
                 
                 queue = self.get_queue(guild_id)
-                playlist_title = playlist_info.get('title', 'Unknown Playlist')
-                total_songs = len(playlist_info['entries'])
+                playlist_title = info.get('title', 'Unknown Playlist')
+                total_songs = len(info['entries'])
                 
-                await processing_msg.edit(content=f"დავიწყე {playlist_title} დამატება ({total_songs} სიმღერა)...")
+                await processing_msg.edit(content=f"პლეილისტი ნაპოვნია: {playlist_title} - {total_songs} სიმღერა")
                 
-                songs_added = 0
-                for i, entry in enumerate(playlist_info['entries']):
-                    if entry:
+                if info['entries'] and not is_playing:
+                    first_entry = info['entries'][0]
+                    if first_entry:
                         try:
-                            entry_info = await self.bot.loop.run_in_executor(
-                                None, 
-                                lambda e=entry: ydl.extract_info(e['url'], download=False)
-                            )
-                            
-                            song_info = {
-                                'url': entry_info.get('url'),
-                                'title': entry_info.get('title', f'Track {i+1}')
+                            with yt_dlp.YoutubeDL(self.ytdl_config) as first_ydl:
+                                first_info = await self.bot.loop.run_in_executor(None, 
+                                    lambda: first_ydl.extract_info(first_entry['url'], download=False))
+                                
+                            first_song = {
+                                'url': first_info.get('url'),
+                                'title': first_info.get('title', 'First Track')
                             }
                             
-                            queue.append(song_info)
-                            songs_added += 1
+                            queue.append(first_song)
                             
-                            if songs_added % 10 == 0:
-                                await processing_msg.edit(content=f"დამატებულია {songs_added}/{total_songs} სიმღერა პლეილისტიდან...")
-                        
+                            await processing_msg.edit(content=f"ვიწყებ დაკვრას: {first_song['title']}")
+                            await self.play_next(ctx)
+                            
+                            asyncio.create_task(self.load_playlist_tracks(ctx, info['entries'][1:], total_songs, processing_msg))
+                            return
+                            
                         except Exception as e:
-                            print(f"Error adding playlist item {i}: {e}")
-                            continue
+                            print(f"Error with first track: {e}")
                 
-                await processing_msg.edit(content=f"რიგში დაემატა {songs_added} სიმღერა პლეილისტიდან: {playlist_title}")
+                await self.load_playlist_tracks(ctx, info['entries'], total_songs, processing_msg)
                 
-                if not is_playing and songs_added > 0:
-                    await self.play_next(ctx)
-                    
         except Exception as e:
             await processing_msg.edit(content=f"შეცდომა პლეილისტის დამუშავებისას: {str(e)}")
+    
+    async def load_playlist_tracks(self, ctx, entries, total_songs, status_msg):
+        guild_id = ctx.guild.id
+        queue = self.get_queue(guild_id)
+        is_playing = ctx.voice_client and ctx.voice_client.is_playing()
+        
+        songs_added = 0
+        batch_size = 10
+        
+        for i in range(0, len(entries), batch_size):
+            batch = entries[i:i+batch_size]
+            batch_tasks = []
+            
+            for entry in batch:
+                if not entry:
+                    continue
+                    
+                task = self.process_playlist_entry(entry)
+                batch_tasks.append(task)
+            
+            results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, Exception):
+                    continue
+                    
+                if result:
+                    queue.append(result)
+                    songs_added += 1
+            
+            await status_msg.edit(content=f"დამატებულია {songs_added}/{total_songs} სიმღერა პლეილისტიდან...")
+        
+        await status_msg.edit(content=f"რიგში დაემატა {songs_added} სიმღერა პლეილისტიდან")
+        
+        if not is_playing and songs_added > 0 and not ctx.voice_client.is_playing():
+            await self.play_next(ctx)
+    
+    async def process_playlist_entry(self, entry):
+        try:
+            quick_config = {
+                'format': 'bestaudio/best',
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(quick_config) as ydl:
+                info = await self.bot.loop.run_in_executor(None, 
+                       lambda: ydl.extract_info(entry['url'], download=False))
+                
+                return {
+                    'url': info.get('url'),
+                    'title': info.get('title', 'Unknown Track')
+                }
+                
+        except Exception as e:
+            print(f"Error processing playlist entry: {e}")
+            return None
 
     @commands.command()
     async def loop(self, ctx, mode="show"):
-        """Set loop mode: off, song, queue"""
         guild_id = ctx.guild.id
         
         if guild_id not in self.loop_state:
@@ -330,7 +386,6 @@ class MusicCog(commands.Cog):
 
     @commands.command()
     async def skip(self, ctx):
-        """Skip the current song"""
         guild_id = ctx.guild.id
         if ctx.voice_client and ctx.voice_client.is_playing():
             if self.get_loop_state(guild_id) == 1:
@@ -344,7 +399,6 @@ class MusicCog(commands.Cog):
 
     @commands.command()
     async def queue(self, ctx):
-        """Show the current queue"""
         guild_id = ctx.guild.id
         queue = self.get_queue(guild_id)
         loop_state = self.get_loop_state(guild_id)
@@ -370,7 +424,6 @@ class MusicCog(commands.Cog):
 
     @commands.command()
     async def pause(self, ctx):
-        """Pause the audio"""
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.pause()
             await ctx.send("პაუზა")
@@ -383,7 +436,6 @@ class MusicCog(commands.Cog):
 
     @commands.command()
     async def clear(self, ctx):
-        """Clear the queue"""
         guild_id = ctx.guild.id
         queue = self.get_queue(guild_id)
         queue.clear()
