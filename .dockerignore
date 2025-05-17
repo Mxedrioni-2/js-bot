@@ -1,0 +1,19 @@
+# Python virtual environment
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE settings
+.vscode/
+.idea/
+
+# Local development settings
+*.log
+
+# Git directory
+.git/
+.gitignore
