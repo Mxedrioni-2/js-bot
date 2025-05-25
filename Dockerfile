@@ -13,7 +13,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-COPY .env .
 ENV $(cat .env | grep -v '^#' | xargs)
 
 CMD ["python", "-u", "main.py"]

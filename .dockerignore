@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.env.example
+
 # IDE settings
 .vscode/
 .idea/
@@ -17,3 +19,6 @@ __pycache__/
 # Git directory
 .git/
 .gitignore
+
+
+.env

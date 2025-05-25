@@ -16,3 +16,9 @@ spec:
         - name: js-bot
           image: js-bot:latest
           imagePullPolicy: Never
+          env:
+            - name: BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: discord-bot-secret
+                  key: BOT_TOKEN
