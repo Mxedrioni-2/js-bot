@@ -12,6 +12,8 @@ spec:
       labels:
         app: js-bot
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: js-bot
           image: docker.io/library/js-bot:latest
