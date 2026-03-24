@@ -29,5 +29,6 @@ jobs:
       - name: Deploy to k3s
         run: |
           kubectl apply -f deployment.yaml
+          kubectl apply -f service.yaml
           kubectl rollout restart deployment/js-bot
           kubectl rollout status deployment/js-bot --timeout=120s  

@@ -3,6 +3,15 @@ from discord.ext import commands
 import logging
 import os
 from dotenv import load_dotenv
+from api.app import create_app
+import asyncio
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)-8s %(name)s %(message)s'
+)
+import uvicorn
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +29,17 @@ async def on_ready():
     except Exception as e:
         logger.info(f"Error loading Music cog: {e}")
 
-bot.run(token)
+async def main():
+    app = create_app(bot)
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(config)
+
+    await asyncio.gather(
+        bot.start(token),
+        server.serve()
+    )
+
+asyncio.run(main())
 
 
 
