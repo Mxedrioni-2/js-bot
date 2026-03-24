@@ -11,6 +11,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
+      - name: Sync secrets to k3s
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          kubectl create secret generic discord-bot-secret \
+            --from-literal=BOT_TOKEN=$BOT_TOKEN \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Build Docker image
         run: docker build -t js-bot:latest .
 
