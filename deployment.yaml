@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: js-bot
-          image: js-bot:latest
+          image: docker.io/library/js-bot:latest
           imagePullPolicy: Never
           env:
             - name: BOT_TOKEN
