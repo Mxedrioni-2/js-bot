@@ -61,7 +61,7 @@ class MusicCog(commands.Cog):
                         del self.current_song[guild_id]
                     del self.last_activity[guild_id]
                     try:
-                        await self.last_text_channel[guild_id].send("კაი კაი აღარ მცალია გერმანიაში მაქვს ფრენა საოპერაციოდ, ყლეზე მკიდია ეგ მარადიული ცხოვრება და სიკვდილი")
+                        await self.last_text_channel[guild_id].send("კაი გავედი, დამიძახეთ რორამე")
                     except discord.Forbidden:
                         continue
 
