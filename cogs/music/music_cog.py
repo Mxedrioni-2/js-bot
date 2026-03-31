@@ -381,7 +381,7 @@ class MusicCog(commands.Cog):
                 del self.current_song[guild_id]
 
             await ctx.voice_client.disconnect()
-            await ctx.send("მოვრჩი დაკვრას, კაი კაი აღარ მცალია გერმანიაში მაქვს ფრენა საოპერაციოდ, ყლეზე მკიდია ეგ მარადიული ცხოვრება და სიკვდილი")
+            await ctx.send("კაი გავედი, დამიძახეთ რორამე")
 
     @commands.command()
     async def skip(self, ctx):
