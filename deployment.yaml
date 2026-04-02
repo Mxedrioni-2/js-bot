@@ -24,3 +24,5 @@ spec:
                 secretKeyRef:
                   name: discord-bot-secret
                   key: BOT_TOKEN
+
+              
