@@ -24,5 +24,15 @@ spec:
                 secretKeyRef:
                   name: discord-bot-secret
                   key: BOT_TOKEN
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: discord-bot-secret
+                  key: SECRET_KEY
+            - name: ADMIN_PASSWORD_HASH 
+              valueFrom:
+                secretKeyRef:
+                  name: discord-bot-secret
+                  key: ADMIN_PASSWORD_HASH
 
               
