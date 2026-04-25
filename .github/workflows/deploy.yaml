@@ -81,11 +81,13 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Sync GHCR pull secret to k3s
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
         run: |
           kubectl create secret docker-registry ghcr-secret \
             --docker-server=ghcr.io \
             --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GHCR_PAT }} \
+            --docker-password=$GHCR_PAT \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy
