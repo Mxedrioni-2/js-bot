@@ -34,6 +34,11 @@ spec:
                 secretKeyRef:
                   name: discord-bot-secret
                   key: ADMIN_PASSWORD_HASH
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: discord-bot-secret
+                  key: REDIS_URL
           envFrom:
             - configMapRef:
                 name: discord-bot-config

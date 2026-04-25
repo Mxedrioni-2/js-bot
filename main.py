@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 def create_redis_client() -> Redis:
+    url = os.getenv("REDIS_URL")
+    if url:
+        return Redis.from_url(url, decode_responses=True)
     return Redis(
         host=os.getenv("REDIS_HOST", "localhost"),
         port=int(os.getenv("REDIS_PORT", 6379)),
