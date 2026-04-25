@@ -53,10 +53,11 @@ class MusicCog(commands.Cog):
             is_empty = self.vc_is_empty(vc)
             is_playing = vc.is_playing()
 
-            logger.info(f"Guild {guild_id}: inactive={is_inactive}, empty={is_empty}, playing={is_playing}")
+            logger.debug("Guild %d: inactive=%s empty=%s playing=%s",
+                         guild_id, is_inactive, is_empty, is_playing)
 
             if (is_inactive and not is_playing) or is_empty:
-                logger.info(f"Guild {guild_id}: disconnecting due to inactivity")
+                logger.info("Guild %d: disconnecting due to inactivity", guild_id)
                 await vc.disconnect()
                 await self.music_dao.clear_queue(guild_id)
                 await self.guild_dao.delete_state(guild_id)
@@ -67,26 +68,30 @@ class MusicCog(commands.Cog):
                 except discord.Forbidden:
                     continue
 
-    @check_inactivity.before_loop
-    async def before_check_inactivity(self):
-        await self.bot.wait_until_ready()
+    @check_inactivity.error
+    async def on_check_inactivity_error(self, error):
+        logger.error("check_inactivity task crashed: %s", error, exc_info=error)
 
     async def resolve_url(self, original_url: str) -> Song | None:
+        logger.debug("Resolving URL: %s", original_url)
         try:
             with yt_dlp.YoutubeDL(self.ytdl_config) as ydl:
                 info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(original_url, download=False))
                 if 'entries' in info:
                     info = info['entries'][0]
-                return Song(
+                song = Song(
                     url=info.get('url'),
                     title=info.get('title', 'Unknown Track'),
                     original_url=original_url
                 )
+                logger.debug("Resolved '%s'", song.title)
+                return song
         except Exception as e:
-            logger.error(f"Error resolving URL: {e}")
+            logger.error("Failed to resolve URL %s: %s", original_url, e)
             return None
 
     async def resolve_url_fast(self, url: str) -> Song | None:
+        logger.debug("Fast-resolving URL: %s", url)
         config = self.ytdl_config.copy()
         config['noplaylist'] = True
         config['extract_flat'] = False
@@ -97,13 +102,15 @@ class MusicCog(commands.Cog):
                 )
                 if 'entries' in info:
                     info = info['entries'][0]
-                return Song(
+                song = Song(
                     url=info.get('url'),
                     title=info.get('title', 'Unknown Track'),
                     original_url=url
                 )
+                logger.debug("Fast-resolved '%s'", song.title)
+                return song
         except Exception as e:
-            print(f"Fast resolve error: {e}")
+            logger.error("Fast resolve failed for %s: %s", url, e)
             return None
 
     async def play_next(self, ctx):
@@ -132,6 +139,7 @@ class MusicCog(commands.Cog):
                     return
 
         await self.guild_dao.set_current_song(guild_id, next_song)
+        logger.info("Guild %d: now playing '%s'", guild_id, next_song.title)
 
         try:
             source = discord.FFmpegOpusAudio(
@@ -141,7 +149,7 @@ class MusicCog(commands.Cog):
 
             def after_playing(error):
                 if error:
-                    logger.error(f"დამენძრა: {error}")
+                    logger.error("Guild %d: playback error: %s", guild_id, error)
                 asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
 
             ctx.voice_client.play(source, after=after_playing)
@@ -150,6 +158,7 @@ class MusicCog(commands.Cog):
             await ctx.send(f'ახლა ვუკრავ: {next_song.title}{loop_msg}')
 
         except Exception as e:
+            logger.error("Guild %d: failed to start playback: %s", guild_id, e)
             await ctx.send(f"დამენძრა: {str(e)}")
             await self.play_next(ctx)
 
@@ -198,6 +207,7 @@ class MusicCog(commands.Cog):
             return
 
         guild_id = ctx.guild.id
+        logger.info("Guild %d: !play by %s — %s", guild_id, ctx.author, url)
         self.last_text_channel[guild_id] = ctx.channel
 
         is_playlist = 'list=' in url or '/playlist' in url
@@ -329,6 +339,7 @@ class MusicCog(commands.Cog):
         if not ctx.voice_client:
             return
         guild_id = ctx.guild.id
+        logger.info("Guild %d: !stop by %s", guild_id, ctx.author)
         await self.music_dao.clear_queue(guild_id)
         await self.guild_dao.delete_state(guild_id)
         await ctx.voice_client.disconnect()
@@ -341,6 +352,7 @@ class MusicCog(commands.Cog):
             await ctx.send("არ არის სიმღერა გაშვებული")
             return
 
+        logger.info("Guild %d: !skip by %s", guild_id, ctx.author)
         loop_state = await self.guild_dao.get_loop_state(guild_id)
         if loop_state == 1:
             await self.guild_dao.set_loop_state(guild_id, 0)

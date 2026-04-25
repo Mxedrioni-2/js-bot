@@ -1,9 +1,11 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from api.auth import verify_password, create_access_token, ADMIN_USERNAME, ADMIN_PASSWORD_HASH, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_user
 from datetime import timedelta
 
 router = APIRouter(prefix = "/auth", tags = ["auth"])
+logger = logging.getLogger(__name__)
 
 @router.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -12,7 +14,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             data = {"sub": form_data.username, "role": "admin"},
             expires_delta = timedelta(minutes = ACCESS_TOKEN_EXPIRE_MINUTES)
         )
+        logger.info("Login successful for user '%s'", form_data.username)
         return {"access_token": token, "token_type": "bearer"}
+    logger.warning("Failed login attempt for user '%s'", form_data.username)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect username or password",
