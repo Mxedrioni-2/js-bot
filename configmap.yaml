@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discord-bot-config
+data:
+  INACTIVITY_TIMEOUT: "180"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  GUILD_STATE_TTL: "3600"
+  FFMPEG_BITRATE: "128k"
+  YTDL_RETRIES: "3"
+  YTDL_SOCKET_TIMEOUT: "10"

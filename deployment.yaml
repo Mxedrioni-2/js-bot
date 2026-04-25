@@ -29,10 +29,11 @@ spec:
                 secretKeyRef:
                   name: discord-bot-secret
                   key: SECRET_KEY
-            - name: ADMIN_PASSWORD_HASH 
+            - name: ADMIN_PASSWORD_HASH
               valueFrom:
                 secretKeyRef:
                   name: discord-bot-secret
                   key: ADMIN_PASSWORD_HASH
-
-              
+          envFrom:
+            - configMapRef:
+                name: discord-bot-config
