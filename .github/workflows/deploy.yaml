@@ -95,5 +95,5 @@ jobs:
           kubectl apply -f configmap.yaml
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
-          kubectl set image deployment/js-bot js-bot=${{ steps.vars.outputs.image }}:${{ steps.meta.outputs.version }}
+          kubectl rollout restart deployment/js-bot
           kubectl rollout status deployment/js-bot --timeout=120s
