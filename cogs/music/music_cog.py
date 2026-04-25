@@ -124,19 +124,19 @@ class MusicCog(commands.Cog):
             if loop_state == 2 and current_song:
                 await self.music_dao.queue_song(guild_id, current_song)
 
-            next_song = await self.resolve_url(next_song.original_url)
-            if not next_song:
-                await ctx.send("სიმღერა ვერ ჩაიტვირთა, ვაგრძელებ...")
-                await self.play_next(ctx)
-                return
+            if next_song.url is None:
+                next_song = await self.resolve_url(next_song.original_url)
+                if not next_song:
+                    await ctx.send("სიმღერა ვერ ჩაიტვირთა, ვაგრძელებ...")
+                    await self.play_next(ctx)
+                    return
 
         await self.guild_dao.set_current_song(guild_id, next_song)
 
         try:
-            source = await discord.FFmpegOpusAudio.from_probe(
+            source = discord.FFmpegOpusAudio(
                 next_song.url,
                 **self.ffmpeg_config,
-                method='fallback'
             )
 
             def after_playing(error):
@@ -197,9 +197,7 @@ class MusicCog(commands.Cog):
             await ctx.send("ვოისში უნდა იყო შესული!")
             return
 
-        await self.ensure_voice(ctx)
         guild_id = ctx.guild.id
-        await self.guild_dao.update_last_activity(guild_id)
         self.last_text_channel[guild_id] = ctx.channel
 
         is_playlist = 'list=' in url or '/playlist' in url
@@ -210,7 +208,13 @@ class MusicCog(commands.Cog):
 
         status_msg = await ctx.send("ვამუშავებ...")
 
-        resolved = await self.resolve_url_fast(bare_url)
+        resolved, _ = await asyncio.gather(
+            self.resolve_url_fast(bare_url),
+            self.ensure_voice(ctx),
+        )
+
+        await self.guild_dao.update_last_activity(guild_id)
+
         if not resolved:
             await status_msg.edit(content="სიმღერის ჩატვირთვა ვერ მოხერხდა")
             return
