@@ -15,6 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set image name
+        id: vars
+        run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/js-bot" >> $GITHUB_OUTPUT
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -32,7 +36,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ lower(github.repository_owner) }}/js-bot
+          images: ${{ steps.vars.outputs.image }}
           tags: |
             type=sha,prefix=,format=short
             type=raw,value=latest
@@ -89,5 +93,5 @@ jobs:
           kubectl apply -f configmap.yaml
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
-          kubectl set image deployment/js-bot js-bot=ghcr.io/${{ lower(github.repository_owner) }}/js-bot:${{ steps.meta.outputs.version }}
+          kubectl set image deployment/js-bot js-bot=${{ steps.vars.outputs.image }}:${{ steps.meta.outputs.version }}
           kubectl rollout status deployment/js-bot --timeout=120s
