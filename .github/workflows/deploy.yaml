@@ -16,11 +16,13 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ADMIN_SECRET_KEY: ${{ secrets.ADMIN_SECRET_KEY }}
           ADMIN_PASSWORD_HASH: ${{ secrets.ADMIN_PASSWORD_HASH }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
         run: |
           kubectl create secret generic discord-bot-secret \
             --from-literal=BOT_TOKEN=$BOT_TOKEN \
             --from-literal=SECRET_KEY=$ADMIN_SECRET_KEY \
             --from-literal=ADMIN_PASSWORD_HASH=$ADMIN_PASSWORD_HASH \
+            --from-literal=REDIS_URL=$REDIS_URL \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Build Docker image
