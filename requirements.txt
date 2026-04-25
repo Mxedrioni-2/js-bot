@@ -28,6 +28,7 @@ python-dotenv==1.1.0
 python-multipart==0.0.22
 python-vlc==3.0.21203
 PyYAML==6.0.2
+redis==5.2.1
 starlette==1.0.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
