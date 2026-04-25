@@ -14,10 +14,12 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/arch: arm64
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: js-bot
-          image: docker.io/library/js-bot:latest
-          imagePullPolicy: Never
+          image: ghcr.io/saba-chkhikvadze/js-bot:latest
+          imagePullPolicy: Always
           env:
             - name: BOT_TOKEN
               valueFrom:

@@ -3,14 +3,56 @@ name: Deploy to k3s
 on:
   push:
     branches: [master]
+
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/js-bot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > ~/.kube/config
+
       - name: Sync secrets to k3s
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -25,16 +67,18 @@ jobs:
             --from-literal=REDIS_URL=$REDIS_URL \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Build Docker image
-        run: docker build -t js-bot:latest .
+      - name: Sync GHCR pull secret to k3s
+        run: |
+          kubectl create secret docker-registry ghcr-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GHCR_PAT }} \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Import image into k3s
+      - name: Deploy
         run: |
-          docker save js-bot:latest | sudo k3s ctr images import -
-      
-      - name: Deploy to k3s
-        run: |
+          kubectl apply -f configmap.yaml
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
           kubectl rollout restart deployment/js-bot
-          kubectl rollout status deployment/js-bot --timeout=120s  
+          kubectl rollout status deployment/js-bot --timeout=120s
