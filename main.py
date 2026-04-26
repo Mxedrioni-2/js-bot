@@ -6,6 +6,7 @@ from dao.guild_dao import GuildDao
 from cogs.music.music_cog import MusicCog
 from api.app import create_app
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import uvicorn
@@ -83,7 +84,11 @@ async def main():
 
     bot = create_bot()
 
-    await bot.add_cog(MusicCog(bot, music_dao, guild_dao))
+    n_workers = int(os.getenv("YTDLP_WORKERS", "4"))
+    executor = ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="yt-dlp")
+    logger.info("yt-dlp thread pool: %d workers", n_workers)
+
+    await bot.add_cog(MusicCog(bot, music_dao, guild_dao, executor))
     logger.info("Music cog loaded")
 
     app = create_app(bot, music_dao, guild_dao)
@@ -106,6 +111,7 @@ async def main():
         pass
     finally:
         logger.info("Shutting down")
+        executor.shutdown(wait=False)
         await redis_client.aclose()
         await bot.close()
 
