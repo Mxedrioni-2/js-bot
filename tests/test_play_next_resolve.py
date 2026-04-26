@@ -23,19 +23,35 @@ PLAYLIST_SONG = Song(
 
 def make_cog(music_dao, guild_dao):
     from cogs.music.music_cog import MusicCog
+    from cogs.music.resolver import UrlResolver
+    from cogs.music.player import Player
+
     bot = MagicMock()
     bot.guilds = []
     bot.loop = MagicMock()
+
+    resolver = UrlResolver.__new__(UrlResolver)
+    resolver.bot = bot
+    resolver.ytdl_config = {}
+
+    player = Player.__new__(Player)
+    player.bot = bot
+    player.music_dao = music_dao
+    player.guild_dao = guild_dao
+    player.resolver = resolver
+    player.ffmpeg_config = {
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+        'options': '-vn',
+    }
+
     cog = MusicCog.__new__(MusicCog)
     cog.bot = bot
     cog.music_dao = music_dao
     cog.guild_dao = guild_dao
     cog.last_text_channel = {}
-    cog.inactivity_timeout = 180
-    cog.ffmpeg_config = {
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-        'options': '-vn',
-    }
+    cog.resolver = resolver
+    cog.player = player
+
     return cog
 
 
@@ -52,34 +68,34 @@ async def test_play_next_skips_resolve_when_url_set(music_dao, guild_dao):
     """Song with url already set must not call resolve_url."""
     await music_dao.queue_song(GUILD_ID, RESOLVED_SONG)
     cog = make_cog(music_dao, guild_dao)
-    cog.resolve_url = AsyncMock(return_value=RESOLVED_SONG)
+    cog.player.resolver.resolve = AsyncMock(return_value=RESOLVED_SONG)
 
     with patch("discord.FFmpegOpusAudio.from_probe", new_callable=AsyncMock) as mock_probe:
         mock_probe.return_value = MagicMock()
-        await cog.play_next(make_ctx())
+        await cog.player.play_next(make_ctx())
 
-    cog.resolve_url.assert_not_called()
+    cog.player.resolver.resolve.assert_not_called()
 
 
 async def test_play_next_resolves_when_url_is_none(music_dao, guild_dao):
     """Song with url=None (playlist entry) must be resolved before playing."""
     await music_dao.queue_song(GUILD_ID, PLAYLIST_SONG)
     cog = make_cog(music_dao, guild_dao)
-    cog.resolve_url = AsyncMock(return_value=RESOLVED_SONG)
+    cog.player.resolver.resolve = AsyncMock(return_value=RESOLVED_SONG)
 
     with patch("discord.FFmpegOpusAudio.from_probe", new_callable=AsyncMock) as mock_probe:
         mock_probe.return_value = MagicMock()
-        await cog.play_next(make_ctx())
+        await cog.player.play_next(make_ctx())
 
-    cog.resolve_url.assert_called_once_with(PLAYLIST_SONG.original_url)
+    cog.player.resolver.resolve.assert_called_once_with(PLAYLIST_SONG.original_url)
 
 
 async def test_play_next_empty_queue_does_nothing(music_dao, guild_dao):
     cog = make_cog(music_dao, guild_dao)
-    cog.resolve_url = AsyncMock()
+    cog.player.resolver.resolve = AsyncMock()
     ctx = make_ctx()
 
-    await cog.play_next(ctx)
+    await cog.player.play_next(ctx)
 
-    cog.resolve_url.assert_not_called()
+    cog.player.resolver.resolve.assert_not_called()
     ctx.send.assert_not_called()
