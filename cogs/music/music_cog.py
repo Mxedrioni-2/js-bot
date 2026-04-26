@@ -1,47 +1,34 @@
-from discord.ext import commands, tasks
 import yt_dlp
 import discord
 import asyncio
-import time
+import logging
+from discord.ext import commands, tasks
 from models.song import Song
 from dao.music_dao import MusicDao
 from dao.guild_dao import GuildDao
-import logging
+from .config import YTDL_CONFIG, FFMPEG_CONFIG, INACTIVITY_TIMEOUT
+from .resolver import UrlResolver
+from .player import Player
+from .playlist import PlaylistLoader
 
 logger = logging.getLogger("music_cog")
+
 
 class MusicCog(commands.Cog):
     def __init__(self, bot, music_dao: MusicDao, guild_dao: GuildDao):
         self.bot = bot
         self.music_dao = music_dao
         self.guild_dao = guild_dao
-        self.inactivity_timeout = 180
-        self.last_text_channel = {}  # stays in-memory, it's a discord object, can't serialize
-        self.ytdl_config = {
-            'format': 'bestaudio/best',
-            'noplaylist': False,
-            'nocheckcertificate': True,
-            'ignoreerrors': False,
-            'quiet': True,
-            'no_warnings': True,
-            'default_search': 'auto',
-            'source_address': '0.0.0.0',
-            'skip_download': True,
-            'buffersize': 4096,
-            'concurrent_fragment_downloads': 5,
-            'socket_timeout': 10,
-            'retries': 3,
-        }
-        self.ffmpeg_config = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': '-vn -ar 48000 -ac 2 -b:a 128k -bufsize 4096k',
-        }
+        self.last_text_channel = {}
+        self.resolver = UrlResolver(bot, YTDL_CONFIG)
+        self.player = Player(bot, music_dao, guild_dao, self.resolver, FFMPEG_CONFIG)
+        self.playlist_loader = PlaylistLoader(bot, music_dao, self.player, YTDL_CONFIG)
         self.check_inactivity.start()
 
     def cog_unload(self):
         self.check_inactivity.cancel()
 
-    @tasks.loop(seconds=180)
+    @tasks.loop(seconds=INACTIVITY_TIMEOUT)
     async def check_inactivity(self):
         for guild in self.bot.guilds:
             guild_id = guild.id
@@ -49,8 +36,8 @@ class MusicCog(commands.Cog):
             if not vc or not vc.is_connected():
                 continue
 
-            is_inactive = await self.guild_dao.check_inactive(guild_id, self.inactivity_timeout)
-            is_empty = self.vc_is_empty(vc)
+            is_inactive = await self.guild_dao.check_inactive(guild_id, INACTIVITY_TIMEOUT)
+            is_empty = self.player.vc_is_empty(vc)
             is_playing = vc.is_playing()
 
             logger.debug("Guild %d: inactive=%s empty=%s playing=%s",
@@ -72,134 +59,6 @@ class MusicCog(commands.Cog):
     async def on_check_inactivity_error(self, error):
         logger.error("check_inactivity task crashed: %s", error, exc_info=error)
 
-    async def resolve_url(self, original_url: str) -> Song | None:
-        logger.debug("Resolving URL: %s", original_url)
-        try:
-            with yt_dlp.YoutubeDL(self.ytdl_config) as ydl:
-                info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(original_url, download=False))
-                if 'entries' in info:
-                    info = info['entries'][0]
-                song = Song(
-                    url=info.get('url'),
-                    title=info.get('title', 'Unknown Track'),
-                    original_url=original_url
-                )
-                logger.debug("Resolved '%s'", song.title)
-                return song
-        except Exception as e:
-            logger.error("Failed to resolve URL %s: %s", original_url, e)
-            return None
-
-    async def resolve_url_fast(self, url: str) -> Song | None:
-        logger.debug("Fast-resolving URL: %s", url)
-        config = self.ytdl_config.copy()
-        config['noplaylist'] = True
-        config['extract_flat'] = False
-        try:
-            with yt_dlp.YoutubeDL(config) as ydl:
-                info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
-                )
-                if 'entries' in info:
-                    info = info['entries'][0]
-                song = Song(
-                    url=info.get('url'),
-                    title=info.get('title', 'Unknown Track'),
-                    original_url=url
-                )
-                logger.debug("Fast-resolved '%s'", song.title)
-                return song
-        except Exception as e:
-            logger.error("Fast resolve failed for %s: %s", url, e)
-            return None
-
-    async def play_next(self, ctx):
-        guild_id = ctx.guild.id
-        loop_state = await self.guild_dao.get_loop_state(guild_id)
-        current_song = await self.guild_dao.get_current_song(guild_id)
-
-        if loop_state == 1 and current_song:
-            next_song = await self.resolve_url(current_song.original_url)
-            if not next_song:
-                await ctx.send("სიმღერის ხელახლა ჩატვირთვა ვერ მოხერხდა")
-                return
-        else:
-            next_song = await self.music_dao.pop_song(guild_id)
-            if not next_song:
-                return
-
-            if loop_state == 2 and current_song:
-                await self.music_dao.queue_song(guild_id, current_song)
-
-            if next_song.url is None:
-                next_song = await self.resolve_url(next_song.original_url)
-                if not next_song:
-                    await ctx.send("სიმღერა ვერ ჩაიტვირთა, ვაგრძელებ...")
-                    await self.play_next(ctx)
-                    return
-
-        await self.guild_dao.set_current_song(guild_id, next_song)
-        logger.info("Guild %d: now playing '%s'", guild_id, next_song.title)
-
-        try:
-            source = discord.FFmpegOpusAudio(
-                next_song.url,
-                **self.ffmpeg_config,
-            )
-
-            def after_playing(error):
-                if error:
-                    logger.error("Guild %d: playback error: %s", guild_id, error)
-                asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
-
-            ctx.voice_client.play(source, after=after_playing)
-
-            loop_msg = " (ლუპში)" if loop_state == 1 else ""
-            await ctx.send(f'ახლა ვუკრავ: {next_song.title}{loop_msg}')
-
-        except Exception as e:
-            logger.error("Guild %d: failed to start playback: %s", guild_id, e)
-            await ctx.send(f"დამენძრა: {str(e)}")
-            await self.play_next(ctx)
-
-    async def fetch_playlist_background(self, ctx, url: str, status_msg):
-        config = self.ytdl_config.copy()
-        config['extract_flat'] = True
-        guild_id = ctx.guild.id
-        try:
-            with yt_dlp.YoutubeDL(config) as ydl:
-                info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
-                )
-            if 'entries' not in info:
-                return
-            for entry in info['entries']:
-                if entry:
-                    await self.music_dao.queue_song(guild_id, Song(
-                        url=None,
-                        title=entry.get('title', 'Unknown Track'),
-                        original_url=entry.get('webpage_url') or entry.get('url')
-                    ))
-            await status_msg.edit(
-                content=f"პლეილისტი ჩაიტვირთა: {info.get('title', '?')} — {len(info['entries'])} სიმღერა"
-            )
-        except Exception as e:
-            await status_msg.edit(content=f"პლეილისტის ჩატვირთვა ვერ მოხერხდა: {e}")
-
-    async def ensure_voice(self, ctx):
-        if ctx.voice_client:
-            if not ctx.voice_client.is_connected():
-                await ctx.voice_client.disconnect(force=True)
-                await asyncio.sleep(1)
-                await ctx.author.voice.channel.connect()
-        else:
-            await ctx.author.voice.channel.connect()
-
-    def vc_is_empty(self, vc) -> bool:
-        if not vc or not vc.channel:
-            return True
-        return len([m for m in vc.channel.members if not m.bot]) == 0
-
     @commands.command()
     async def play(self, ctx, *, url: str):
         if not ctx.author.voice:
@@ -219,8 +78,8 @@ class MusicCog(commands.Cog):
         status_msg = await ctx.send("ვამუშავებ...")
 
         resolved, _ = await asyncio.gather(
-            self.resolve_url_fast(bare_url),
-            self.ensure_voice(ctx),
+            self.resolver.resolve_fast(bare_url),
+            self.player.ensure_voice(ctx),
         )
 
         await self.guild_dao.update_last_activity(guild_id)
@@ -236,10 +95,10 @@ class MusicCog(commands.Cog):
             await status_msg.edit(content=f"რიგში დაემატა: {resolved.title}")
         else:
             await status_msg.edit(content=f"ვუკრავ: {resolved.title}")
-            await self.play_next(ctx)
+            await self.player.play_next(ctx)
 
         if is_playlist:
-            asyncio.create_task(self.fetch_playlist_background(ctx, url, status_msg))
+            asyncio.create_task(self.playlist_loader.fetch_background(ctx, url, status_msg))
 
     @commands.command()
     async def playlist(self, ctx, *, url: str):
@@ -247,7 +106,7 @@ class MusicCog(commands.Cog):
             await ctx.send("ვოისში უნდა იყო შესული!")
             return
 
-        await self.ensure_voice(ctx)
+        await self.player.ensure_voice(ctx)
         guild_id = ctx.guild.id
         await self.guild_dao.update_last_activity(guild_id)
         self.last_text_channel[guild_id] = ctx.channel
@@ -257,11 +116,13 @@ class MusicCog(commands.Cog):
         is_playing = vc and vc.is_playing()
 
         try:
-            config = self.ytdl_config.copy()
+            config = YTDL_CONFIG.copy()
             config['extract_flat'] = True
 
             with yt_dlp.YoutubeDL(config) as ydl:
-                info = await self.bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                info = await self.bot.loop.run_in_executor(
+                    None, lambda: ydl.extract_info(url, download=False)
+                )
 
             if 'entries' not in info or not info['entries']:
                 await processing_msg.edit(content="პლეილისტი ვერ ვიპოვე ან ცარიელია")
@@ -269,45 +130,30 @@ class MusicCog(commands.Cog):
 
             entries = info['entries']
             playlist_title = info.get('title', 'Unknown Playlist')
-            await processing_msg.edit(content=f"პლეილისტი ნაპოვნია: {playlist_title} - {len(entries)} სიმღერა")
+            await processing_msg.edit(
+                content=f"პლეილისტი ნაპოვნია: {playlist_title} - {len(entries)} სიმღერა"
+            )
 
             if not is_playing and entries:
                 first = entries[0]
                 first_song = Song(
                     url=None,
                     title=first.get('title', 'Unknown Track'),
-                    original_url=first.get('webpage_url') or first.get('url')
+                    original_url=first.get('webpage_url') or first.get('url'),
                 )
                 await self.music_dao.queue_song(guild_id, first_song)
                 await processing_msg.edit(content=f"ვიწყებ დაკვრას: {first_song.title}")
-                await self.play_next(ctx)
-                asyncio.create_task(self.load_playlist_tracks(ctx, entries[1:], len(entries), processing_msg))
+                await self.player.play_next(ctx)
+                asyncio.create_task(
+                    self.playlist_loader.load_tracks(ctx, entries[1:], len(entries), processing_msg)
+                )
             else:
-                asyncio.create_task(self.load_playlist_tracks(ctx, entries, len(entries), processing_msg))
+                asyncio.create_task(
+                    self.playlist_loader.load_tracks(ctx, entries, len(entries), processing_msg)
+                )
 
         except Exception as e:
             await processing_msg.edit(content=f"შეცდომა პლეილისტის დამუშავებისას: {str(e)}")
-
-    async def load_playlist_tracks(self, ctx, entries, total_songs: int, status_msg):
-        guild_id = ctx.guild.id
-        songs_added = 0
-
-        for i, entry in enumerate(entries):
-            if not entry:
-                continue
-            await self.music_dao.queue_song(guild_id, Song(
-                url=None,
-                title=entry.get('title', 'Unknown Track'),
-                original_url=entry.get('webpage_url') or entry.get('url')
-            ))
-            songs_added += 1
-            if i % 10 == 0:
-                await status_msg.edit(content=f"დამატებულია {songs_added}/{total_songs} სიმღერა...")
-
-        await status_msg.edit(content=f"რიგში დაემატა {songs_added} სიმღერა პლეილისტიდან")
-
-        if not ctx.voice_client.is_playing():
-            await self.play_next(ctx)
 
     @commands.command()
     async def loop(self, ctx, mode: str = "show"):
@@ -405,8 +251,3 @@ class MusicCog(commands.Cog):
             guild_id = message.guild.id
             await self.guild_dao.update_last_activity(guild_id)
             self.last_text_channel[guild_id] = message.channel
-
-
-async def setup(bot, music_dao: MusicDao, guild_dao: GuildDao):
-    await bot.add_cog(MusicCog(bot, music_dao, guild_dao))
-    logger.info("Music cog loaded")
