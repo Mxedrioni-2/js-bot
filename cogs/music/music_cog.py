@@ -15,14 +15,15 @@ logger = logging.getLogger("music_cog")
 
 
 class MusicCog(commands.Cog):
-    def __init__(self, bot, music_dao: MusicDao, guild_dao: GuildDao):
+    def __init__(self, bot, music_dao: MusicDao, guild_dao: GuildDao, executor):
         self.bot = bot
         self.music_dao = music_dao
         self.guild_dao = guild_dao
+        self.executor = executor
         self.last_text_channel = {}
-        self.resolver = UrlResolver(bot, YTDL_CONFIG)
+        self.resolver = UrlResolver(bot, YTDL_CONFIG, executor)
         self.player = Player(bot, music_dao, guild_dao, self.resolver, FFMPEG_CONFIG)
-        self.playlist_loader = PlaylistLoader(bot, music_dao, self.player, YTDL_CONFIG)
+        self.playlist_loader = PlaylistLoader(bot, music_dao, self.player, YTDL_CONFIG, executor)
         self.check_inactivity.start()
 
     def cog_unload(self):
@@ -121,7 +122,7 @@ class MusicCog(commands.Cog):
 
             with yt_dlp.YoutubeDL(config) as ydl:
                 info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
+                    self.executor, lambda: ydl.extract_info(url, download=False)
                 )
 
             if 'entries' not in info or not info['entries']:

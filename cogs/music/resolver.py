@@ -6,16 +6,17 @@ logger = logging.getLogger("music_cog.resolver")
 
 
 class UrlResolver:
-    def __init__(self, bot, ytdl_config: dict):
+    def __init__(self, bot, ytdl_config: dict, executor):
         self.bot = bot
         self.ytdl_config = ytdl_config
+        self.executor = executor
 
     async def resolve(self, original_url: str) -> Song | None:
         logger.debug("Resolving URL: %s", original_url)
         try:
             with yt_dlp.YoutubeDL(self.ytdl_config) as ydl:
                 info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(original_url, download=False)
+                    self.executor, lambda: ydl.extract_info(original_url, download=False)
                 )
                 if 'entries' in info:
                     info = info['entries'][0]
@@ -38,7 +39,7 @@ class UrlResolver:
         try:
             with yt_dlp.YoutubeDL(config) as ydl:
                 info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
+                    self.executor, lambda: ydl.extract_info(url, download=False)
                 )
                 if 'entries' in info:
                     info = info['entries'][0]

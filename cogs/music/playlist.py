@@ -6,11 +6,12 @@ logger = logging.getLogger("music_cog.playlist")
 
 
 class PlaylistLoader:
-    def __init__(self, bot, music_dao, player, ytdl_config: dict):
+    def __init__(self, bot, music_dao, player, ytdl_config: dict, executor):
         self.bot = bot
         self.music_dao = music_dao
         self.player = player
         self.ytdl_config = ytdl_config
+        self.executor = executor
 
     async def fetch_background(self, ctx, url: str, status_msg):
         config = self.ytdl_config.copy()
@@ -19,7 +20,7 @@ class PlaylistLoader:
         try:
             with yt_dlp.YoutubeDL(config) as ydl:
                 info = await self.bot.loop.run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
+                    self.executor, lambda: ydl.extract_info(url, download=False)
                 )
             if 'entries' not in info:
                 return
